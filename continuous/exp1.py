@@ -36,16 +36,22 @@ def pde_residual(X: torch.Tensor, output: torch.Tensor, k) -> torch.Tensor:
 
 
 devices = check_devices()
-nx, ny, nt = 40, 40, 10
+nx, ny, nt = 40, 40, 12
 shape = (nx, ny)
 domain = Square(nx=nx, ny=ny)
 Time_space = TimeSpaceDomain(0, 10, nt=nt, nx=nx, ny=ny, cond='2points', bound_val=[0, 10], init_val=2)
 Time_space.set_permeability(k=[3, 9, 15, 20])
-layer_size = [3, 100, 100, 100, 1]
+visualize_k(Time_space)
+layer_size = [3, 100, 200, 200, 100, 20, 1]
 
 model = PINN(solver_layers=layer_size, domain=Time_space,
-             device_ids=[0], log_dir='../logs/exp_1.2', pde_func=pde_residual, lr=3e-3)
+             device_ids=[0], log_dir='../logs/exp_add-point2', pde_func=pde_residual, lr=3e-3)
+
+# model = PINN(solver_layers=layer_size, domain=Time_space,
+#              device_ids=[0], log_dir='../logs/exp_not-add-point', pde_func=pde_residual, lr=1e-2)
 #
-model.train_solver(max_iter=20000, interval=1000)
+print('model original data nums:{}'.format(len(model.original_X)))
+model.train_solver(max_iter=2000, interval=100)
+print('model last data nums:{}'.format(len(model.X)))
 #
 # TS = TimeSpaceDomain(0, 1, 10)

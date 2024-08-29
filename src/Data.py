@@ -14,6 +14,7 @@ from matplotlib import pyplot as plt
 class Square:
     def __init__(self, x_min=0, x_max=1, nx=50, y_min=0, y_max=1, ny=50):
 
+        self.k_list = None
         self.type = 'space'
         self.x_min, self.x_max, self.y_min, self.y_max = x_min, x_max, y_min, y_max
         self.nx, self.ny = nx, ny
@@ -65,12 +66,14 @@ class Square:
         only associated with x
         """
         n = len(k)
+        self.k_list = k
         x_i = np.linspace(self.x_min, self.x_max, n+1, endpoint=True)
         self.permeability = np.ones(len(self.point)) * k[0]
         if n > 1:
             for i in range(n):
                 if i == n-1:
-                    idx = np.where(np.all((self.x_array >= x_i[i], self.x_array <= x_i[i + 1]), axis=0))[0]  # x <= x_max
+                    idx = np.where(np.all((self.x_array >= x_i[i], self.x_array <= x_i[i + 1]), axis=0))[0]
+                    # x <= x_max
                 else:
                     idx = np.where(np.all((self.x_array >= x_i[i], self.x_array < x_i[i + 1]), axis=0))[0]
                 self.permeability[idx] = k[i]
@@ -175,7 +178,8 @@ def visualize_k(domain):
     else:
         c = ax.pcolormesh(domain.X, domain.Y, k,
                           shading='auto', cmap=plt.cm.jet)
-
+    # points = np.random.rand(20,2)
+    # ax.plot(points[:,0], points[:,1], 'kx', markersize=5, clip_on=False, alpha=1.0)
     ax.set_aspect('equal')
     ax.set_xlabel('X')
     ax.set_ylabel('Y')

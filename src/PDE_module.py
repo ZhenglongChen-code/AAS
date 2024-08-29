@@ -7,13 +7,22 @@ from torch import nn
 from tqdm import trange
 from torch.optim.lr_scheduler import StepLR
 from torch.utils.tensorboard import SummaryWriter
-
+from sklearn.mixture import GaussianMixture
 """
 This file provides two ways for design a PINN model, one is to create a PINN class and the other is to create several
 functions and combine these functions and dataset together. The first method is more efficient and easy to use, but the
 second way is more flexible.
 
 """
+
+
+def select_point(x_range, y_range, z):
+    idx1 = np.where(np.all([x_range[0] <= z[:, 0], z[:, 0] <= x_range[1]], axis=0))[0]
+    idx2 = np.where(np.all([y_range[0] <= z[:, 1], z[:, 1] <= y_range[1]], axis=0))[0]
+
+    idx = list(set(idx1) & set(idx2))
+
+    return z[idx]
 
 
 class DNN(torch.nn.Module):
@@ -208,7 +217,9 @@ class PINN():
             self.init_point = None
             self.init_val = None
 
-        # NN params
+        self.original_X = self.X
+
+        # PINN params
         self.solver = DNN(solver_layers).cuda(device=device_ids[0])
         if len(device_ids) > 1:
             self.solver = nn.DataParallel(self.solver, device_ids=device_ids)
@@ -217,6 +228,11 @@ class PINN():
         # self.optimizer = torch.optim.LBFGS(self.solver.parameters(), lr=lr)
         self.scheduler = StepLR(self.optimizer, step_size=100, gamma=0.95)
         self.criterion = nn.MSELoss()
+
+        # adaptive sample parameters
+        # self.n_components = list(range(2, 8))
+        self.samplers = [GaussianMixture(n_components=i, covariance_type='full', max_iter=2000) for i in list(range(4, 5))]
+        self.generate_num = len(self.X) // 10
 
         # pde parameters
         self.residual_func = pde_func
@@ -227,8 +243,26 @@ class PINN():
         self.writer = SummaryWriter(comment='PINNS_data', log_dir=log_dir)
         self.train_step = 0
 
-    def data_update(self, X):
-        self.X = X
+    def data_update(self, add_point):
+        # if not isinstance(add_point, torch.Tensor):
+        #     add_point = add_point.detach()
+
+        k = self.domain.k_list
+        n = len(k)
+        x_i = np.linspace(self.domain.x_min, self.domain.x_max, n + 1, endpoint=True)
+        new_permeability = np.ones(len(add_point)) * k[0]
+        if n > 1:
+            for i in range(n):
+                if i == n - 1:
+                    idx = np.where(np.all((add_point[:, 0] >= x_i[i], add_point[:, 0] <= x_i[i + 1]), axis=0))[0]
+                    # x <= x_max
+                else:
+                    idx = np.where(np.all((add_point[:, 0] >= x_i[i], add_point[:, 0] < x_i[i + 1]), axis=0))[0]
+                new_permeability[idx] = k[i]
+        new_permeability = torch.tensor(new_permeability, dtype=torch.float32).cuda(device=self.device_ids[0]).reshape(-1, 1)
+        add_point = torch.tensor(add_point, dtype=torch.float32).cuda(device=self.device_ids[0])
+        self.X = torch.vstack((self.X, add_point))
+        self.k = torch.vstack((self.k, new_permeability))
 
     def train_loss(self):
         """
@@ -249,6 +283,7 @@ class PINN():
         # self.writer.add_scalar(tag='bound_loss', scalar_value=loss_bound.detach(), global_step=self.train_step)
         # self.writer.add_scalar(tag='residual', scalar_value=residual.detach(), global_step=self.train_step)
         self.writer.add_scalars('Loss', {'bound_loss': loss_bound, 'residual': residual}, self.train_step)
+        # bound loss and init loss are difficult to decrease
         return loss_bound + residual + loss_init, res_vec
 
     def get_pde_residual(self):
@@ -292,8 +327,25 @@ class PINN():
 
                 fig = self.visualize_t()
                 self.writer.add_figure(tag='solution', figure=fig, global_step=(epoch + 1))
-                fig2 = self.visualize_res(res_vec)
+                fig2 = self.visualize_res(res_vec.abs())  # plot abs residual
                 self.writer.add_figure(tag='residual', figure=fig2, global_step=(epoch + 1))
+
+                # using adaptive sample:
+                for sampler in self.samplers:
+                    # res_vec = self.get_pde_residual().detach().cpu().numpy()
+                    idx_res = torch.where(res_vec > 0.5 * res_vec.max())[0]
+                    sampler.fit(self.X[idx_res].detach().cpu().numpy())
+                    Z, Z_label = sampler.sample(self.generate_num)
+                    x_range = [self.domain.x_min, self.domain.x_max]
+                    y_range = [self.domain.y_min, self.domain.y_max]
+                    X_new = select_point(x_range, y_range, Z)
+                    while len(X_new) < self.generate_num//2:
+                        Z, Z_label = sampler.sample(self.generate_num)
+                        X_new = np.vstack((X_new, select_point(x_range, y_range, Z)))
+                    fig3 = self.visualize_res(res_vec.abs(), add_point=X_new)  # plot abs residual and add_point
+                    self.writer.add_figure(tag='residual and add_point', figure=fig3, global_step=(epoch + 1))
+                    # update self.X
+                    self.data_update(add_point=X_new)
 
         self.writer.add_graph(self.solver, input_to_model=self.X)
         self.writer.close()
@@ -317,9 +369,9 @@ class PINN():
             # using default point
             out_pre = solver(self.X)
             return out_pre.detach().cpu().numpy()
-
+    
     def visualize(self):
-        out = self.predict()
+        out = self.predict(point=self.original_X)
         shape = self.domain.shape
         fig = plt.figure(dpi=300, figsize=(4, 4))
         ax = fig.add_subplot(1, 1, 1)
@@ -344,45 +396,9 @@ class PINN():
         return fig
 
     def visualize_t(self):
-        out = self.predict()
+        out = self.predict(point=self.original_X)
+        out = out[list(range(len(self.original_X)))]
         shape = self.domain.shape
-        out = out.reshape(shape)
-
-        fig = plt.figure(dpi=600, figsize=(15, 15))
-        axs = [fig.add_subplot(3, 4, i + 1) for i in range(10)]
-
-        x, y = self.domain.bound_point[:, 0], self.domain.bound_point[:, 1]
-
-        if isinstance(x, torch.Tensor):
-            x = x.detach().cpu().numpy()
-            y = y.detach().cpu().numpy()
-
-        for i in range(10):
-            axs[i].set_xlabel('X')
-            axs[i].set_ylabel('Y')
-
-            # rand_ind = [np.random.randint(0, len(self.bound_point)) for _ in range(20)]
-
-            im = axs[i].imshow(out[:, :, i], cmap='viridis', extent=[x.min(), x.max(), y.min(), y.max()],
-                               origin='lower')
-            axs[i].set_xlim(x.min(), x.max())
-            axs[i].set_ylim(y.min(), y.max())
-            axs[i].plot(x, y, 'kx', markersize=5, clip_on=False, alpha=1.0)
-            axs[i].set_title('press_t{}'.format(i))
-            if i == 9:
-                cbar = fig.colorbar(im, ax=axs[i], orientation='vertical', extend='both',
-                                    ticks=[0, 0.25, 0.5, 0.75, 1], format='%.2f', label='Press Values')
-                # 设置 colorbar 的刻度标签大小
-                cbar.ax.tick_params(labelsize=10)
-        # plt.show()
-        return fig
-
-    def visualize_res(self, res_vector):
-        out = res_vector.detach().cpu().numpy()
-        res_min, res_max = np.min(out), np.max(out)
-        shape = self.domain.shape
-        # print('domain shape:'.format(shape))
-
         out = out.reshape(shape)
         nt = shape[-1]
 
@@ -400,20 +416,93 @@ class PINN():
             axs[i].set_ylabel('Y')
 
             # rand_ind = [np.random.randint(0, len(self.bound_point)) for _ in range(20)]
-
-            im = axs[i].imshow(out[:, :, i], cmap='viridis', extent=[x.min(), x.max(), y.min(), y.max()],
+            value = out[:, :, i]
+            im = axs[i].imshow(value, cmap='viridis', extent=[x.min(), x.max(), y.min(), y.max()],
                                origin='lower')
+
             axs[i].set_xlim(x.min(), x.max())
             axs[i].set_ylim(y.min(), y.max())
-            # axs[i].plot(x, y, 'kx', markersize=5, clip_on=False, alpha=1.0)
-            axs[i].set_title('residual_t{}'.format(i))
-            if i == nt-1:
+            axs[i].plot(x, y, 'kx', markersize=5, clip_on=False, alpha=1.0)
+            axs[i].set_title('press_t{}'.format(i))
+            if i == 9:
                 cbar = fig.colorbar(im, ax=axs[i], orientation='vertical', extend='both',
-                                    ticks=np.linspace(0, res_max, 5), format='%.2f', label='Residual Values')
+                                    ticks=np.linspace(value.min(), value.max(), 5, endpoint=True), format='%.2f',
+                                    label='Press Values')
                 # 设置 colorbar 的刻度标签大小
                 cbar.ax.tick_params(labelsize=10)
         # plt.show()
         return fig
 
+    def visualize_res(self, res_vector, add_point=None):
+        out = res_vector.detach().cpu().numpy()
+        out = out[list(range(len(self.original_X)))]
+        res_min, res_max = np.min(out), np.max(out)
+        shape = self.domain.shape
+        # print('domain shape:'.format(shape))
+
+        out = out.reshape(shape)
+        nt = shape[-1]
+
+        fig = plt.figure(dpi=600, figsize=(10, 10))
+        axs = [fig.add_subplot(3, 4, i + 1) for i in range(nt)]
+        X, Y = self.domain.X, self.domain.Y
+
+        if isinstance(X, torch.Tensor):
+            X = X.detach().cpu().numpy()
+            Y = Y.detach().cpu().numpy()
+
+        for i in range(nt):
+            axs[i].set_xlabel('X')
+            axs[i].set_ylabel('Y')
+            value = out[:, :, i]
+            gca = axs[i].pcolormesh(X[:, :, 0], Y[:, :, 0], out[:, :, i],
+                                    shading='auto', cmap=plt.cm.jet)
+            if add_point is not None:
+                idx = np.where(np.all((i < add_point[:, -1],  add_point[:, -1] <= i+1), axis=0))[0]
+                axs[i].plot(add_point[idx, 0], add_point[idx, 1],  'kx', markersize=3,
+                            label='add {} points'.format(len(idx)), alpha=1.0)
+
+            axs[i].set_aspect('equal')
+            axs[i].set_xlabel('X')
+            axs[i].set_ylabel('Y')
+            axs[i].set_xlim(self.domain.x_min, self.domain.x_max)
+            axs[i].set_ylim(self.domain.y_min, self.domain.y_max)
+            axs[i].set_title('residual{}'.format(i))
+
+            cbar = fig.colorbar(gca, ax=axs[i], orientation='vertical', extend='both',
+                                ticks=np.linspace(value.min(), value.max(), 5, endpoint=True), format='%.2f',
+                                label='Residual Values')
+            # 设置 colorbar 的刻度标签大小
+            cbar.ax.tick_params(labelsize=2)
+
+
+        # x, y = self.domain.bound_point[:, 0], self.domain.bound_point[:, 1]
+        #
+        # if isinstance(x, torch.Tensor):
+        #     x = x.detach().cpu().numpy()
+        #     y = y.detach().cpu().numpy()
+        #
+        # for i in range(nt):
+        #     axs[i].set_xlabel('X')
+        #     axs[i].set_ylabel('Y')
+        #
+        #     # rand_ind = [np.random.randint(0, len(self.bound_point)) for _ in range(20)]
+        #     # use
+        #
+        #     im = axs[i].imshow(out[:, :, i], cmap='viridis', extent=[x.min(), x.max(), y.min(), y.max()],
+        #                        origin='lower')
+        #     axs[i].set_xlim(x.min(), x.max())
+        #     axs[i].set_ylim(y.min(), y.max())
+        #     # axs[i].plot(x, y, 'kx', markersize=5, clip_on=False, alpha=1.0)
+        #     axs[i].set_title('residual_t{}'.format(i))
+        #     if i == nt-1:
+        #         cbar = fig.colorbar(im, ax=axs[i], orientation='vertical', extend='both',
+        #                             ticks=np.linspace(0, res_max, 5), format='%.2f', label='Residual Values')
+        #         # 设置 colorbar 的刻度标签大小
+        #         cbar.ax.tick_params(labelsize=10)
+        # plt.show()
+        return fig
+
+
 # class GMM:
-    
+
