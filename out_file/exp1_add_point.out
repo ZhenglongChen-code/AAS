@@ -1,0 +1,21 @@
+gpu num is: 6
+train 100 steps, train loss: 4.502134323120117
+train 200 steps, train loss: 59.14289855957031
+train 300 steps, train loss: 48.14011764526367
+train 400 steps, train loss: 44.345191955566406
+train 500 steps, train loss: 42.45136260986328
+train 600 steps, train loss: 41.155967712402344
+train 700 steps, train loss: 40.18186950683594
+train 800 steps, train loss: 38.9356575012207
+train 900 steps, train loss: 37.8663444519043
+train 1000 steps, train loss: 37.17523956298828
+train 1100 steps, train loss: 36.40766143798828
+train 1200 steps, train loss: 35.716957092285156
+train 1300 steps, train loss: 35.21281433105469
+train 1400 steps, train loss: 34.663291931152344
+train 1500 steps, train loss: 34.245361328125
+train 1600 steps, train loss: 33.82320022583008
+train 1700 steps, train loss: 33.497528076171875
+train 1800 steps, train loss: 33.16840744018555
+train 1900 steps, train loss: 32.86589050292969
+train 2000 steps, train loss: 32.57948684692383

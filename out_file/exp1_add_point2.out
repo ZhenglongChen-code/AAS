@@ -1,0 +1,23 @@
+gpu num is: 6
+model original data nums:19200
+train 100 steps, train loss: 9.544641494750977
+train 200 steps, train loss: 35.030208587646484
+train 300 steps, train loss: 31.276105880737305
+train 400 steps, train loss: 29.87517547607422
+train 500 steps, train loss: 29.074127197265625
+train 600 steps, train loss: 28.504390716552734
+train 700 steps, train loss: 28.12682342529297
+train 800 steps, train loss: 27.802162170410156
+train 900 steps, train loss: 27.52517318725586
+train 1000 steps, train loss: 27.25946807861328
+train 1100 steps, train loss: 27.01968765258789
+train 1200 steps, train loss: 26.805471420288086
+train 1300 steps, train loss: 26.62180519104004
+train 1400 steps, train loss: 26.436635971069336
+train 1500 steps, train loss: 26.267377853393555
+train 1600 steps, train loss: 26.111913681030273
+train 1700 steps, train loss: 25.96660804748535
+train 1800 steps, train loss: 25.826292037963867
+train 1900 steps, train loss: 25.68348503112793
+train 2000 steps, train loss: 25.542451858520508
+model last data nums:53077
