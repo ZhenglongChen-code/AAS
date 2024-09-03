@@ -49,7 +49,7 @@ mu_o = 2e-3
 ct = 5e-8
 p_init = 30.0 * 1e6
 nt = 100
-dt = 10000
+dt = 20000
 qw = 0.0005
 chuk = 5e-15
 poro = 0.1
@@ -65,11 +65,11 @@ test_data = np.load('../dataset/test_data_20x20.npz')
 test_press, test_permeability = test_data['test_press'], test_data['test_permeability']
 
 # save data
-writer = SummaryWriter(comment='discriminate_data', log_dir='../logs/Gaussian_2d')
+writer = SummaryWriter(comment='discriminate_data', log_dir='../logs/perme_2d')
 
 # constant value
 # trans_matrix = []
-X = []
+X = []  # scaled permeability
 trans_w, trans_e, trans_s, trans_n = [], [], [], []
 for perm in train_permeability:
     mesh = MeshGrid(nx, ny, nz, perm.flatten(), mu_o, ct,
@@ -85,10 +85,10 @@ for perm in train_permeability:
                         mesh.trans_matrix[3].detach()))
     if len(X) == 0:
         X = x_i
-        permeability = torch.tensor(perm)
+        permeability = torch.tensor(perm * 1e15) 
     else:
         X = torch.vstack((X, x_i))
-        permeability = torch.vstack((permeability, torch.tensor(perm)))
+        permeability = torch.vstack((permeability, torch.tensor(perm * 1e15)))
 
     # press_input.append(mesh.press)
 
@@ -98,7 +98,7 @@ trans_n = torch.tensor(trans_n).to(devices[0])
 trans_s = torch.tensor(trans_s).to(devices[0])
 
 press_init = torch.tile(mesh.press, (100, 1))
-perm_input = torch.tensor(train_permeability * 1e15, dtype=torch.float64).to(devices[0])
+perm_input = torch.tensor(train_permeability * 1e14, dtype=torch.float64).to(devices[0])
 neighbor_idx = mesh.neighbor_vectors
 batch_size = 100
 # perm_loader = Dataloader()
@@ -117,7 +117,7 @@ input_size = nx * ny * nz  # 输入为单元渗透率或trans，后者更好
 model = nn.Sequential(b1, b2, b3, b4,
                       nn.Flatten(), nn.Linear(1000, input_size)).to(torch.float64).cuda()
 
-optimizer = torch.optim.Adam(model.parameters(), lr=5e-3)
+optimizer = torch.optim.Adam(model.parameters(), lr=3e-3)
 scheduler = StepLR(optimizer, step_size=100, gamma=0.95)
 
 # data prepare
@@ -128,9 +128,8 @@ for t in range(nt):
     if t % 10 == 0:
         fig = plt.figure(dpi=600, figsize=(5, 5))
 
-    # min_loss = 1e+5
-    p_input = 1e15 * permeability.reshape(batch_size, nz, nx, ny).to(devices[0])
-    for i in tqdm(range(1000), desc='training'):
+    p_input = permeability.reshape(batch_size, nz, nx, ny).to(devices[0])
+    for i in tqdm(range(2000), desc='training'):
         optimizer.zero_grad()
         model.train()
         # p_input = p_last.reshape(batch_size, nz, nx, ny)
@@ -176,7 +175,7 @@ for t in range(nt):
     # 设置 colorbar 的刻度标签大小
     cbar.ax.tick_params(labelsize=2)
     if (t+1) % 10 == 0:
-        plt.savefig('../figure/Gaussian_t_{}.png'.format(t+1))
+        plt.savefig('../figure/perme_t_{}.png'.format(t+1))
         plt.show()
         writer.add_figure('press solution', fig, global_step=t+1)
 

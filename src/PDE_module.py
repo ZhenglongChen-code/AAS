@@ -452,8 +452,6 @@ class PINN():
             Y = Y.detach().cpu().numpy()
 
         for i in range(nt):
-            axs[i].set_xlabel('X')
-            axs[i].set_ylabel('Y')
             value = out[:, :, i]
             gca = axs[i].pcolormesh(X[:, :, 0], Y[:, :, 0], out[:, :, i],
                                     shading='auto', cmap=plt.cm.jet)

@@ -49,7 +49,7 @@ mu_o = 2e-3
 ct = 5e-8
 p_init = 30.0 * 1e6
 nt = 100
-dt = 10000
+dt = 20000
 qw = 0.0005
 chuk = 5e-15
 poro = 0.1
@@ -64,8 +64,9 @@ train_press, train_permeability = train_data['train_press'], train_data['train_p
 test_data = np.load('../dataset/test_data_20x20.npz')
 test_press, test_permeability = test_data['test_press'], test_data['test_permeability']
 
+scaled_trans_params = 1e11
 # save data
-writer = SummaryWriter(comment='discriminate_data', log_dir='../logs/Gaussian_2d')
+writer = SummaryWriter(comment='discriminate_data', log_dir='../logs/press+trans')
 
 # constant value
 # trans_matrix = []
@@ -79,10 +80,16 @@ for perm in train_permeability:
     trans_e.append(mesh.trans_matrix[1].detach().cpu().numpy())
     trans_n.append(mesh.trans_matrix[2].detach().cpu().numpy())
     trans_s.append(mesh.trans_matrix[3].detach().cpu().numpy())
-    x_i = torch.vstack((mesh.press, mesh.trans_matrix[0].detach(),
-                        mesh.trans_matrix[1].detach(),
-                        mesh.trans_matrix[2].detach(),
-                        mesh.trans_matrix[3].detach()))
+    x_i = torch.vstack((mesh.press / p_init,
+                        mesh.trans_matrix[0].detach() * scaled_trans_params,
+                        mesh.trans_matrix[1].detach() * scaled_trans_params,
+                        mesh.trans_matrix[2].detach() * scaled_trans_params,
+                        mesh.trans_matrix[3].detach() * scaled_trans_params))
+    # x_i = torch.vstack((mesh_t.press / p_init,
+    #                     mesh_t.trans_matrix[0].detach() * scaled_trans_params,
+    #                     mesh_t.trans_matrix[1].detach() * scaled_trans_params,
+    #                     mesh_t.trans_matrix[2].detach() * scaled_trans_params,
+    #                     mesh_t.trans_matrix[3].detach() * scaled_trans_params))
     if len(X) == 0:
         X = x_i
         permeability = torch.tensor(perm)
@@ -92,60 +99,58 @@ for perm in train_permeability:
 
     # press_input.append(mesh.press)
 
-trans_w = torch.tensor(trans_w).to(devices[0])
-trans_e = torch.tensor(trans_e).to(devices[0])
-trans_n = torch.tensor(trans_n).to(devices[0])
-trans_s = torch.tensor(trans_s).to(devices[0])
+# trans_w = torch.tensor(trans_w).to(devices[0])
+# trans_e = torch.tensor(trans_e).to(devices[0])
+# trans_n = torch.tensor(trans_n).to(devices[0])
+# trans_s = torch.tensor(trans_s).to(devices[0])
 
-press_init = torch.tile(mesh.press, (100, 1))
-perm_input = torch.tensor(train_permeability * 1e15, dtype=torch.float64).to(devices[0])
 neighbor_idx = mesh.neighbor_vectors
 batch_size = 100
+
+input_tensor = X.reshape(batch_size, 5, nx, ny).to(devices[0])
 # perm_loader = Dataloader()
 
 # NN params
 criterion = nn.MSELoss()
-b1 = nn.Sequential(nn.Conv2d(1, 20, kernel_size=3, stride=1, padding=1),
+b1 = nn.Sequential(nn.Conv2d(5, 20, kernel_size=3, stride=1, padding=1),
                    nn.BatchNorm2d(20), nn.ReLU(), nn.MaxPool2d(kernel_size=2, stride=2))  # 1x20x20 --> 20x10x10
 b2 = nn.Sequential(*resnet_block(20, 20, 2, first_block=True))
-b3 = nn.Sequential(*resnet_block(20, 20, 2, first_block=True))
+# b3 = nn.Sequential(*resnet_block(20, 20, 2, first_block=True))
 b4 = nn.Sequential(*resnet_block(20, 40, 2, first_block=False))
-# b5 = nn.Sequential(*resnet_block(40,80,2,first_block=False))
+b5 = nn.Sequential(*resnet_block(40, 80, 2, first_block=False))
 
 input_size = nx * ny * nz  # 输入为单元渗透率或trans，后者更好
 # 实例化模型
-model = nn.Sequential(b1, b2, b3, b4,
-                      nn.Flatten(), nn.Linear(1000, input_size)).to(torch.float64).cuda()
+model = nn.Sequential(b1, b2, b4, b5,
+                      nn.Flatten(), nn.Linear(720, input_size)).to(torch.float64).to(devices[0])
 
-optimizer = torch.optim.Adam(model.parameters(), lr=5e-3)
-scheduler = StepLR(optimizer, step_size=100, gamma=0.95)
+optimizer = torch.optim.Adam(model.parameters(), lr=2e-3)
+scheduler = StepLR(optimizer, step_size=100, gamma=0.98)
 
 # data prepare
-p_last = press_init / p_init
+p_last = input_tensor[:, 0, :, :].reshape(-1, 400)  # already scaled in to [0,1]
+trans_w = input_tensor[:, 1, :, :].reshape(-1, 400)
+trans_e = input_tensor[:, 2, :, :].reshape(-1, 400)
+trans_n = input_tensor[:, 3, :, :].reshape(-1, 400)
+trans_s = input_tensor[:, 4, :, :].reshape(-1, 400)
 nt = 100
 model_list = []
 for t in range(nt):
     if t % 10 == 0:
         fig = plt.figure(dpi=600, figsize=(5, 5))
 
-    # min_loss = 1e+5
-    p_input = 1e15 * permeability.reshape(batch_size, nz, nx, ny).to(devices[0])
-    for i in tqdm(range(1000), desc='training'):
+    for i in tqdm(range(2000), desc='training'):
         optimizer.zero_grad()
         model.train()
         # p_input = p_last.reshape(batch_size, nz, nx, ny)
-
-        p_next = model(p_input)  # size: [m, 400]
-
+        p_next = model(input_tensor)  # size: [m, 400]
         res = torch.zeros_like(p_next)
         res[:] = res[:] + (mesh.cell_volume * mesh.porosity * mesh.ct / dt) * (p_next[:]*p_init - p_last[:]*p_init)
-        # for j in range(batch_size):  # 把trans_matrix 改成4个方向的tensor可以加速。
-            # for d in range(4):
-            #     res[j] = res[j] - trans_matrix[j][d] * (p_next[j, neighbor_idx[d]] * p_init - p_next[j] * p_init)
-        res[:] = res[:] - trans_w * (p_next[:, neighbor_idx[0]] * p_init - p_next[:] * p_init)
-        res[:] = res[:] - trans_e * (p_next[:, neighbor_idx[1]] * p_init - p_next[:] * p_init)
-        res[:] = res[:] - trans_n * (p_next[:, neighbor_idx[2]] * p_init - p_next[:] * p_init)
-        res[:] = res[:] - trans_s * (p_next[:, neighbor_idx[3]] * p_init - p_next[:] * p_init)
+
+        res[:] = res[:] - trans_w / scaled_trans_params * (p_next[:, neighbor_idx[0]] * p_init - p_next[:] * p_init)
+        res[:] = res[:] - trans_e/scaled_trans_params * (p_next[:, neighbor_idx[1]] * p_init - p_next[:] * p_init)
+        res[:] = res[:] - trans_n/scaled_trans_params * (p_next[:, neighbor_idx[2]] * p_init - p_next[:] * p_init)
+        res[:] = res[:] - trans_s/scaled_trans_params * (p_next[:, neighbor_idx[3]] * p_init - p_next[:] * p_init)
 
         res[:, 0] = res[:, 0] + mesh.PI * (p_next[:, 0] * p_init - mesh.pwf)
         loss = criterion(res, torch.zeros_like(res))
@@ -153,19 +158,25 @@ for t in range(nt):
         loss.backward()  # 仅在必要时使用 retain_graph=True
         optimizer.step()
         scheduler.step()
-        if (i+1) % 100 == 0:
+        if (i+1) % 500 == 0:
             print('time step:{}, train step:{:d}, loss{}'.format(t, i+1, loss.item()))
-        if loss < 1e-17:
+        if loss < 1e-15:
             print('time step:{}, train step:{:d}, loss{}'.format(t, i + 1, loss.item()))
             break
 
     p_last = p_next.detach()  # 计算下一个时间步时，使用 detach()分离数据
     p_last[:, 0] = p_bc/p_init
+    input_tensor[:, 0, :, :] = p_last.reshape(-1, 20, 20)
+    p_last = input_tensor[:, 0, :, :].reshape(-1, 400) 
+    trans_w = input_tensor[:, 1, :, :].reshape(-1, 400)
+    trans_e = input_tensor[:, 2, :, :].reshape(-1, 400)
+    trans_n = input_tensor[:, 3, :, :].reshape(-1, 400)
+    trans_s = input_tensor[:, 4, :, :].reshape(-1, 400)
     model_list.append(copy.deepcopy(model))
 
     # save figure
     axs = fig.add_subplot(4, 3, (t % 10)+1)
-    out = p_next[-1].detach().cpu().numpy().reshape(nx, ny)
+    out = p_next[5].detach().cpu().numpy().reshape(nx, ny)
     gca = axs.imshow(out, origin='lower', cmap='viridis')
     axs.set_xlabel('X', fontsize=5)
     axs.set_ylabel('Y', fontsize=5)
@@ -176,10 +187,59 @@ for t in range(nt):
     # 设置 colorbar 的刻度标签大小
     cbar.ax.tick_params(labelsize=2)
     if (t+1) % 10 == 0:
-        plt.savefig('../figure/Gaussian_t_{}.png'.format(t+1))
+        plt.savefig('../figure/press+trans_t_{}.png'.format(t+1))
         plt.show()
         writer.add_figure('press solution', fig, global_step=t+1)
 
 
 sequence_model = SequenceModel(model_list)
 torch.save(sequence_model.model_list, '../model/sequence.pth')
+
+### test file
+with open('../dataset/samplesperm.txt') as f:
+    data = f.readlines()
+    permeability_t = list(map(float, data))
+    permeability_t = np.array(permeability) * 1e-15
+
+mesh_t = MeshGrid(nx, ny, nz, train_permeability[-1].flatten(), mu_o, ct,poro, p_init, p_bc, bhp_constant)
+x_i = torch.vstack((mesh_t.press / p_init,
+                    mesh_t.trans_matrix[0].detach() * scaled_trans_params,
+                    mesh_t.trans_matrix[1].detach() * scaled_trans_params,
+                    mesh_t.trans_matrix[2].detach() * scaled_trans_params,
+                    mesh_t.trans_matrix[3].detach() * scaled_trans_params))
+
+test_tensor = x_i.reshape(1, 5, nx, ny)
+p_last = test_tensor[:, 0, :, :].reshape(-1, 400)
+trans_w = test_tensor[:, 1, :, :].reshape(-1, 400)
+trans_e = test_tensor[:, 2, :, :].reshape(-1, 400)
+trans_n = test_tensor[:, 3, :, :].reshape(-1, 400)
+trans_s = test_tensor[:, 4, :, :].reshape(-1, 400)
+
+for t in range(nt):
+    if t % 10 == 0:
+        fig = plt.figure(dpi=600, figsize=(5, 5))
+
+    p_next = model_list[t](test_tensor)
+    p_last = p_next.detach()
+
+    # plot setting
+    axs = fig.add_subplot(4, 3, (t % 10) + 1)
+    out = p_next[0].detach().cpu().numpy().reshape(nx, ny)
+    gca = axs.imshow(out, origin='lower', cmap='viridis')
+    axs.set_xlabel('X', fontsize=5)
+    axs.set_ylabel('Y', fontsize=5)
+    axs.set_title('press_t_{}'.format(t + 1), fontsize=5)
+    axs.tick_params(axis='both', labelsize=5)
+    cbar = fig.colorbar(gca, ax=axs, orientation='vertical', extend='both',
+                        ticks=np.linspace(out.min(), out.max(), 5, endpoint=True),
+                        format='%.2f')  # ,label='Press Values'
+    # 设置 colorbar 的刻度标签大小
+    cbar.ax.tick_params(labelsize=2)
+
+    # reset input tensor
+    test_tensor[:, 0, :, :] = p_last.reshape(1, nx, ny)
+
+    if (t + 1) % 10 == 0:
+        # plt.savefig('../figure/press+trans_test_t_{}.png'.format(t + 1))
+        plt.show()
+        writer.add_figure('press solution', fig, global_step=t + 1)

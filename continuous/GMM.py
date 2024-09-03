@@ -384,30 +384,31 @@ class PINN():
         # print('sample nums:{}'.format(len(X_samples)))
 
         # 2. using system resample can ensure get more training data
-        X_samples = system_resample(X_t, residual_t, resample_num=self.generate_num, devise_ids=self.device_ids[0])
-        if len(X_samples) > 10:
-            # 这里可以分别用多个sampler拟合，然后计算采样点对数概率最大的索引，使用对应sampler
-            [sampler.fit(X_samples) for sampler in self.samplers]
-            score_list = [sampler.score_samples(X_samples).sum() for sampler in self.samplers]
-            best_idx = np.argmax(score_list)
-            best_sampler = self.samplers[best_idx]
-            Z_t, Z_t_label = best_sampler.sample(self.generate_num)
-            x_range = [self.domain.x_min, self.domain.x_max]
-            y_range = [self.domain.y_min, self.domain.y_max]
-            X_new = select_point(x_range, y_range, Z_t)
-            while len(X_new) < self.generate_num // 2:
-                Z_t, Z_t_label = best_sampler.sample(self.generate_num//2)
-                Z_t = select_point(x_range, y_range, Z_t)
-                X_new = np.vstack((X_new, select_point(x_range, y_range, Z_t)))
+        # X_samples = system_resample(X_t, residual_t, resample_num=self.generate_num, devise_ids=self.device_ids[0])
+        # if len(X_samples) > 10:
+        #     # 这里可以分别用多个sampler拟合，然后计算采样点对数概率最大的索引，使用对应sampler
+        #     [sampler.fit(X_samples) for sampler in self.samplers]
+        #     score_list = [sampler.score_samples(X_samples).sum() for sampler in self.samplers]
+        #     best_idx = np.argmax(score_list)
+        #     best_sampler = self.samplers[best_idx]
+        #     Z_t, Z_t_label = best_sampler.sample(self.generate_num)
+        #     x_range = [self.domain.x_min, self.domain.x_max]
+        #     y_range = [self.domain.y_min, self.domain.y_max]
+        #     X_new = select_point(x_range, y_range, Z_t)
+        #     while len(X_new) < self.generate_num // 2:
+        #         Z_t, Z_t_label = best_sampler.sample(self.generate_num//2)
+        #         Z_t = select_point(x_range, y_range, Z_t)
+        #         X_new = np.vstack((X_new, select_point(x_range, y_range, Z_t)))
 
-            self.data_update(add_point=np.hstack((X_new, t_array[i] * np.ones((len(X_new), 1)))))
-            print('add {0} points, now there are {1} points'.format(len(X_new), len(self.X)))
-            return X_new
-        else:
-            return None
+        #     self.data_update(add_point=np.hstack((X_new, t_array[i] * np.ones((len(X_new), 1)))))
+        #     print('add {0} points, now there are {1} points'.format(len(X_new), len(self.X)))
+        #     return X_new
+        # else:
+        #     return None
 
-        # using das
-        # X_new = self.das(i, t_array, res_vector)
+        # using das 
+
+        X_new = self.das(i, t_array, res_vector)
 
         return X_new
     
@@ -516,7 +517,7 @@ visualize_k(Time_space)
 layer_size = [3, 50, 100, 200, 100, 50, 1]
 
 model = PINN(solver_layers=layer_size, domain=Time_space,
-             device_ids=[0], log_dir='../logs/Gaussian_sample', pde_func=pde_residual, lr=3e-3,
+             device_ids=[0], log_dir='../logs/das_sample_littile', pde_func=pde_residual, lr=3e-3,
              args=args)
 
 # model = PINN(solver_layers=layer_size, domain=Time_space,

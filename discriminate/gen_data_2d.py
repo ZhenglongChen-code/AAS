@@ -46,7 +46,7 @@ def compute_press(cell_list, nx, ny):
 
 
 kl = [1, 3, 5, 6, 8]
-dist = [[1, 3], [5, 19]]  # 均匀分布的参数,
+dist = [[150, 300], [60, 90]]  # 均匀分布的参数,
 dist_dim = len(dist)  # 有几个均匀分布
 full_set = []  # 单元组全集
 start_time = time.time()
@@ -64,7 +64,7 @@ end_time = time.time()
 print("create permeability set cost {:.5f} s".format(end_time - start_time))
 
 
-nx, ny, nz = 10, 10, 1  # x, y, z 方向的cell数目, 这个方向顶点个数要比cell数目多一个
+nx, ny, nz = 20, 20, 1  # x, y, z 方向的cell数目, 这个方向顶点个数要比cell数目多一个
 p_init, p_bc = 30 * 1e+6, 20 * 1e+6
 all_press = []  # 存放所有的Press
 all_permeability = []
@@ -93,8 +93,8 @@ train_press, test_press = all_press[:100], all_press[100:]
 train_permeability, test_permeability = all_permeability[:100], all_permeability[100:]
 
 # save data
-np.savez('../dataset/train_data_10x10.npz', train_press=train_press, train_permeability=train_permeability)
-np.savez('../dataset/test_data_10x10.npz', test_press=test_press, test_permeability=test_permeability)
+np.savez('../dataset/train_data_20x20.npz', train_press=train_press, train_permeability=train_permeability)
+np.savez('../dataset/test_data_20x20.npz', test_press=test_press, test_permeability=test_permeability)
 # np.save('../dataset/train_press_10x10.npy', train_press)
 # np.save('../dataset/train_permeability_10x10.npy', train_permeability)
 # np.save('../dataset/test_press_10x10.npy', test_press)

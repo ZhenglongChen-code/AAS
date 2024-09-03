@@ -37,8 +37,9 @@ class Cell:
 class MeshGrid(Node, Cell):
     def __init__(self, nx, ny, nz, permeability,
                  mu_o=2e-3, ct=5e-8, porosity=0.1, p_init=30.0*1e6, p_bc=20.0*1e6,
-                 bhp_constant=0):
+                 bhp_constant=20.0 * 1e6, devices=['cuda:0']):
         # Define cell num and Length of side
+        self.devices = devices
         self.ls_x, self.ls_y, self.ls_z = 5, 5, 5  # x, y, z 方向的长宽高
         self.node_list = []  # 存放节点, 按编号索引
         self.cell_list = []
@@ -69,20 +70,22 @@ class MeshGrid(Node, Cell):
         self.length = 3000
         self.cs = self.ct * 3.14 * self.rw ** 2 * self.length
         self.bhp_constant = bhp_constant
-        self.ddx = 10
-        self.ddy = 10
+        self.ddx = 5
+        self.ddy = 5
         self.re = 0.14 * (self.ddx ** 2 + self.ddy ** 2) ** 0.5
         # PI 分子还要乘以渗透率场K
-        self.PI = - torch.tensor(2 * torch.pi * self.ddx * 2.5e-15 / self.mu_o / (math.log(self.re / self.rw)
-                                                                                + self.SS)).cuda()
+        # self.PI = torch.tensor(2 * torch.pi * self.ddx * 2.5e-15 / self.mu_o / (math.log(self.re / self.rw)
+        #                                                                         + self.SS)).cuda()
+        self.PI = torch.tensor(2 * torch.pi * self.ddx * self.cell_list[0].kx /
+                               self.mu_o / (math.log(self.re / self.rw) + self.SS)).to(devices[0])
         # bottom-hole pressure
-        self.pwf = torch.tensor(self.bhp_constant).cuda()
+        self.pwf = torch.tensor(self.bhp_constant).to(torch.float64).to(devices[0])
         # boundary condition
         self.cell_list[0].markwell = 1
         # initial condition
-        self.p_init = torch.tensor(p_init).cuda()
-        self.p_bc = torch.tensor(p_bc).cuda()
-        self.press = torch.ones(len(self.cell_list)).cuda() * self.p_init
+        self.p_init = torch.tensor(p_init).to(devices[0])
+        self.p_bc = torch.tensor(p_bc).to(devices[0])
+        self.press = torch.ones(len(self.cell_list), dtype=torch.float64).to(devices[0]) * self.p_init
         self.press[0] = self.p_bc  #
         self.q = (self.press[0] - self.pwf) * self.PI
         self.sum_delta_p = None  # 计算公式里面的 \sum_j  T_{ij} * (p_j -p_i)
@@ -214,7 +217,7 @@ class MeshGrid(Node, Cell):
 
             self.trans_matrix.append(current_cell_trans_matrix)  # 注意这个时候的trans_matrix是(len(cell_list), 4) 数组
 
-        self.trans_matrix = torch.tensor(self.trans_matrix).T.cuda()
+        self.trans_matrix = torch.tensor(self.trans_matrix, dtype=torch.float64).T.to(self.devices[0])
         self.neighbor_vectors = neighbor_vector  # [4, nx*ny] shape matrix, each colum represent 4 neighbor cell index.
         # print('self.trans_matrix has been computed, shape is :{}'.format(self.trans_matrix.shape))
 
@@ -226,7 +229,7 @@ class MeshGrid(Node, Cell):
         then \sum_j T_{ij}*(p_j - p_i) = sum(trans_matrix * delta_p , axis = 0)  and its shape is (1, len(cell_list))
         """
         # neighbor_w, neighbor_e, neighbor_n, neighbor_s = self.neighbor_vectors[0], ...[1], ...[2], ...[3]
-        delta_p = torch.zeros((4, self.ncell)).cuda()  # same shape with self.trans_matrix
+        delta_p = torch.zeros((4, self.ncell)).to(self.devices[0]) # same shape with self.trans_matrix
         for c in range(4):
             delta_p[c, :] = (self.press[self.neighbor_vectors[c]] - self.press) * self.trans_matrix[c]
         self.sum_delta_p = torch.sum(delta_p, dim=0)  # 不要忘记\laplace_p 与 trans_matrix 做点乘
