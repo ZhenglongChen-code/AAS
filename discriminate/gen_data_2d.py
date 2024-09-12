@@ -50,7 +50,7 @@ dist = [[150, 300], [60, 90]]  # 均匀分布的参数,
 dist_dim = len(dist)  # 有几个均匀分布
 full_set = []  # 单元组全集
 start_time = time.time()
-while len(full_set) < 200:  # 100个训练，100个测试
+while len(full_set) < 1200:  # 100个训练，100个测试
     # tqdm.write('current processing: {:.2f}%'.format(len(full_set)/5e3 * 100))
     test_k = set()  # 使用集合防止5列数据重复, 如果实际的均匀分布参数没有重合部分可以不写这一步。
     while len(test_k) < dist_dim:
@@ -89,8 +89,8 @@ for k in tqdm(full_set, desc='loading permeability'):
 
 all_press = np.array(all_press)
 all_permeability = np.array(all_permeability)
-train_press, test_press = all_press[:100], all_press[100:]
-train_permeability, test_permeability = all_permeability[:100], all_permeability[100:]
+train_press, test_press = all_press[:1000], all_press[1000:]
+train_permeability, test_permeability = all_permeability[:1000], all_permeability[1000:]
 
 # save data
 np.savez('../dataset/train_data_20x20.npz', train_press=train_press, train_permeability=train_permeability)

@@ -4,6 +4,13 @@ from torch import nn
 import torch.nn.functional as F
 
 
+def check_devices():
+    gpu_count = torch.cuda.device_count()
+    devices = [torch.device(f'cuda:{i}') for i in range(gpu_count)]
+    print('gpu num is: {}'.format(gpu_count))
+    return devices
+
+
 # fcn模型
 class FNN(nn.Module):
     def __init__(self, layer_size, activation=nn.Tanh):
@@ -77,6 +84,38 @@ class LinearRestLayer(nn.Module):
 
         Y = Y + inputs
         return Y
+
+
+class GAM_Attention(nn.Module):
+    def __init__(self, in_channels, out_channels, rate=4):
+        super(GAM_Attention, self).__init__()
+
+        self.channel_attention = nn.Sequential(
+            nn.Linear(in_channels, int(in_channels / rate)),
+            nn.ReLU(inplace=True),
+            nn.Linear(int(in_channels / rate), in_channels)
+        )
+
+        self.spatial_attention = nn.Sequential(
+            nn.Conv2d(in_channels, int(in_channels / rate), kernel_size=7, padding=3),
+            nn.BatchNorm2d(int(in_channels / rate)),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(int(in_channels / rate), out_channels, kernel_size=7, padding=3),
+            nn.BatchNorm2d(out_channels)
+        )
+
+    def forward(self, x):
+        b, c, h, w = x.shape
+        x_permute = x.permute(0, 2, 3, 1).view(b, -1, c)
+        x_att_permute = self.channel_attention(x_permute).view(b, h, w, c)
+        x_channel_att = x_att_permute.permute(0, 3, 1, 2)
+
+        x = x * x_channel_att
+
+        x_spatial_att = self.spatial_attention(x).sigmoid()
+        out = x * x_spatial_att
+
+        return out
 
 # b1 = nn.Sequential(nn.Conv2d(1, 20, kernel_size=3, stride=1, padding=1),
 #                    nn.BatchNorm2d(20), nn.ReLU(), nn.MaxPool2d(kernel_size=2, stride=2))  # 1x20x20 --> 20x10x10

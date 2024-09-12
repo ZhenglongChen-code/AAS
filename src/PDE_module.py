@@ -503,4 +503,25 @@ class PINN():
 
 
 # class GMM:
+def plot_10_figs(input_tensor, nx, ny, file_path):
+    n = len(input_tensor)
+    for t in range(n):
+        if t % 10 == 0:
+            fig = plt.figure(dpi=600, figsize=(12, 7))
 
+        axs = fig.add_subplot(4, 3, (t % 10) + 1)
+        out = input_tensor[t].detach().cpu().numpy().reshape(nx, ny)
+        gca = axs.imshow(out, origin='lower', cmap='viridis')
+        axs.set_xlabel('X', fontsize=5)
+        axs.set_ylabel('Y', fontsize=5)
+        axs.set_title('press_t_{}'.format(t + 1), fontsize=5)
+        axs.tick_params(axis='both', labelsize=5)
+        cbar = fig.colorbar(gca, ax=axs, orientation='vertical', extend='both',
+                            ticks=np.linspace(out.min(), out.max(), 5, endpoint=True),
+                            format='%.2f')  # ,label='Press Values'
+        # 设置 colorbar 的刻度标签大小
+        cbar.ax.tick_params(labelsize=2)
+
+        if (t + 1) % 10 == 0:
+            plt.savefig(file_path)
+            plt.show()
